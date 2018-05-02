@@ -100,6 +100,7 @@ import qualified Dhall.Context
 import qualified Dhall.Core
 import qualified Dhall.Import
 import qualified Dhall.Parser
+import qualified Dhall.Pretty.Internal
 import qualified Dhall.TypeCheck
 
 throws :: Exception e => Either e a -> IO a
@@ -113,7 +114,11 @@ throws (Right r) = return r
     This exception indicates that an invalid `Type` was provided to the `input`
     function
 -}
-data InvalidType = InvalidType { typ :: Expr Src X, expr :: Expr Src X } deriving (Typeable)
+data InvalidType =
+  InvalidType { expectedType :: Expr Src X
+              , unsupportedExpression :: Expr Src X
+              }
+  deriving (Typeable)
 
 _ERROR :: String
 _ERROR = "\ESC[1;31mError\ESC[0m"
@@ -122,9 +127,9 @@ instance Show InvalidType where
     show (InvalidType typ expr) =
         _ERROR
         <> ": Invalid Dhall.Type                                                  \n"
-        <> show typ
+        <> Data.Text.Lazy.unpack (Dhall.Pretty.Internal.pretty typ)
         <> "\n                                                                                \n"
-        <> show expr
+        <> Data.Text.Lazy.unpack (Dhall.Pretty.Internal.pretty expr)
         <> "\n                                                                                \n\
         \Every Type must provide an extract function that succeeds if an expression      \n\
         \matches the expected type.  You provided a Type that disobeys this contract     \n"
