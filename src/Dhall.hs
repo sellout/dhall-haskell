@@ -113,15 +113,19 @@ throws (Right r) = return r
     This exception indicates that an invalid `Type` was provided to the `input`
     function
 -}
-data InvalidType = InvalidType deriving (Typeable)
+data InvalidType = InvalidType { typ :: Expr Src X, expr :: Expr Src X } deriving (Typeable)
 
 _ERROR :: String
 _ERROR = "\ESC[1;31mError\ESC[0m"
 
 instance Show InvalidType where
-    show InvalidType =
-        _ERROR <> ": Invalid Dhall.Type                                                  \n\
-        \                                                                                \n\
+    show (InvalidType typ expr) =
+        _ERROR
+        <> ": Invalid Dhall.Type                                                  \n"
+        <> show typ
+        <> "\n                                                                                \n"
+        <> show expr
+        <> "\n                                                                                \n\
         \Every Type must provide an extract function that succeeds if an expression      \n\
         \matches the expected type.  You provided a Type that disobeys this contract     \n"
 
@@ -185,7 +189,7 @@ inputWith (Type {..}) ctx n txt = do
     _ <- throws (Dhall.TypeCheck.typeWith ctx annot)
     case extract (Dhall.Core.normalizeWith n expr') of
         Just x  -> return x
-        Nothing -> Control.Exception.throwIO InvalidType
+        Nothing -> Control.Exception.throwIO (InvalidType expected expr')
 
 -- | Use this function to extract Haskell values directly from Dhall AST.
 --   The intended use case is to allow easy extraction of Dhall values for
