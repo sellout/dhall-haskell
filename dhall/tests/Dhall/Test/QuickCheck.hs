@@ -13,7 +13,6 @@ import Dhall.Map (Map)
 import Dhall.Core
     ( Binding(..)
     , Chunks(..)
-    , Const(..)
     , Directory(..)
     , Expr(..)
     , File(..)
@@ -23,6 +22,7 @@ import Dhall.Core
     , ImportMode(..)
     , ImportType(..)
     , Scheme(..)
+    , Universe(..)
     , URL(..)
     , Var(..)
     )
@@ -143,8 +143,8 @@ instance (Arbitrary s, Arbitrary a) => Arbitrary (Chunks s a) where
 
     shrink = genericShrink
 
-instance Arbitrary Const where
-    arbitrary = Test.QuickCheck.oneof [ pure Type, pure Kind, pure Sort ]
+instance Arbitrary Universe where
+    arbitrary = lift1 Universe
 
     shrink = genericShrink
 
@@ -169,7 +169,7 @@ instance (Arbitrary s, Arbitrary a) => Arbitrary (Expr s a) where
     arbitrary =
         Test.QuickCheck.suchThat
             (Test.QuickCheck.frequency
-                [ ( 7, lift1 Const)
+                [ ( 7, lift1 Sort)
                 , ( 7, lift1 Var)
                 , ( 1, Test.QuickCheck.oneof [ lift2 (Lam "_"), lift3 Lam ])
                 , ( 1, Test.QuickCheck.oneof [ lift2 (Pi "_"), lift3 Pi ])

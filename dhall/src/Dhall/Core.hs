@@ -17,14 +17,14 @@
 
 module Dhall.Core (
     -- * Syntax
-      Const(..)
-    , Directory(..)
+      Directory(..)
     , File(..)
     , FilePrefix(..)
     , Import(..)
     , ImportHashed(..)
     , ImportMode(..)
     , ImportType(..)
+    , Universe(..)
     , URL(..)
     , Scheme(..)
     , Var(..)
@@ -121,10 +121,10 @@ import qualified Text.Printf
     Note that Dhall does not support functions from terms to types and therefore
     Dhall is not a dependently typed language
 -}
-data Const = Type | Kind | Sort deriving (Show, Eq, Data, Bounded, Enum, Generic)
+newtype Universe = Universe Natural deriving (Show, Eq, Data, Generic)
 
-instance Pretty Const where
-    pretty = Pretty.unAnnotate . prettyConst
+instance Pretty Universe where
+    pretty = Pretty.unAnnotate . prettyUniverse
 
 {-| Internal representation of a directory that stores the path components in
     reverse order
@@ -340,8 +340,8 @@ instance Pretty Var where
 
 -- | Syntax tree for expressions
 data Expr s a
-    -- | > Const c                                  ~  c
-    = Const Const
+    -- | > Sort (Universe n)                        ~  Sort n
+    = Sort Universe
     -- | > Var (V x 0)                              ~  x
     --   > Var (V x n)                              ~  x@n
     | Var Var
@@ -483,7 +483,7 @@ data Expr s a
 -- implementation with this pragma below to allow GHC to, possibly,
 -- inline the implementation for performance improvements.
 instance Functor (Expr s) where
-  fmap _ (Const c) = Const c
+  fmap _ (Sort n) = Sort n
   fmap _ (Var v) = Var v
   fmap f (Lam v e1 e2) = Lam v (fmap f e1) (fmap f e2)
   fmap f (Pi v e1 e2) = Pi v (fmap f e1) (fmap f e2)
@@ -558,7 +558,7 @@ instance Applicative (Expr s) where
 instance Monad (Expr s) where
     return = pure
 
-    Const a              >>= _ = Const a
+    Sort a               >>= _ = Sort a
     Var a                >>= _ = Var a
     Lam a b c            >>= k = Lam a (b >>= k) (c >>= k)
     Pi  a b c            >>= k = Pi a (b >>= k) (c >>= k)
@@ -627,7 +627,7 @@ instance Monad (Expr s) where
     Embed a              >>= k = k a
 
 instance Bifunctor Expr where
-    first _ (Const a             ) = Const a
+    first _ (Sort a              ) = Sort a
     first _ (Var a               ) = Var a
     first k (Lam a b c           ) = Lam a (first k b) (first k c)
     first k (Pi a b c            ) = Pi a (first k b) (first k c)
@@ -806,7 +806,7 @@ instance Pretty a => Pretty (Expr s a) where
     name in order to avoid shifting the bound variables by mistake.
 -}
 shift :: Integer -> Var -> Expr s a -> Expr s a
-shift _ _ (Const a) = Const a
+shift _ _ (Sort a) = Sort a
 shift d (V x n) (Var (V x' n')) = Var (V x' n'')
   where
     n'' = if x == x' && n <= n' then n' + d else n'
@@ -984,7 +984,7 @@ shift _ _ (Embed p) = Embed p
 > subst x C B  ~  B[x := C]
 -}
 subst :: Var -> Expr s a -> Expr s a -> Expr s a
-subst _ _ (Const a) = Const a
+subst _ _ (Sort a) = Sort a
 subst (V x n) e (Lam y _A b) = Lam y _A' b'
   where
     _A' = subst (V x n )                  e  _A
@@ -1160,8 +1160,8 @@ subst _ _ (Embed p) = Embed p
 {-| α-normalize an expression by renaming all bound variables to @\"_\"@ and
     using De Bruijn indices to distinguish them
 
->>> alphaNormalize (Lam "a" (Const Type) (Lam "b" (Const Type) (Lam "x" "a" (Lam "y" "b" "x"))))
-Lam "_" (Const Type) (Lam "_" (Const Type) (Lam "_" (Var (V "_" 1)) (Lam "_" (Var (V "_" 1)) (Var (V "_" 1)))))
+>>> alphaNormalize (Lam "a" (Sort (Universe 0)) (Lam "b" (Sort (Universe 0)) (Lam "x" "a" (Lam "y" "b" "x"))))
+Lam "_" (Sort (Universe 0)) (Lam "_" (Sort (Universe 0)) (Lam "_" (Var (V "_" 1)) (Lam "_" (Var (V "_" 1)) (Var (V "_" 1)))))
 
     α-normalization does not affect free variables:
 
@@ -1211,7 +1211,7 @@ boundedType _                = False
 -- | Remove all `Note` constructors from an `Expr` (i.e. de-`Note`)
 denote :: Expr s a -> Expr t a
 denote (Note _ b            ) = denote b
-denote (Const a             ) = Const a
+denote (Sort a              ) = Sort a
 denote (Var a               ) = Var a
 denote (Lam a b c           ) = Lam a (denote b) (denote c)
 denote (Pi a b c            ) = Pi a (denote b) (denote c)
@@ -1302,7 +1302,7 @@ normalizeWithM
 normalizeWithM ctx e0 = loop (denote e0)
  where
  loop e =  case e of
-    Const k -> pure (Const k)
+    Sort k -> pure (Sort k)
     Var v -> pure (Var v)
     Lam x _A b -> Lam x <$> _A' <*> b'
       where
@@ -1727,7 +1727,7 @@ isNormalized :: Eq a => Expr s a -> Bool
 isNormalized e0 = loop (denote e0)
   where
     loop e = case e of
-      Const _ -> True
+      Sort _ -> True
       Var _ -> True
       Lam _ a b -> loop a && loop b
       Pi _ a b -> loop a && loop b
@@ -1919,7 +1919,7 @@ isNormalized e0 = loop (denote e0)
 True
 >>> "x" `freeIn` "y"
 False
->>> "x" `freeIn` Lam "x" (Const Type) "x"
+>>> "x" `freeIn` Lam "x" (Sort (Universe 0)) "x"
 False
 -}
 freeIn :: Eq a => Var -> Expr s a -> Bool
@@ -2009,7 +2009,7 @@ reservedIdentifiers =
 
 -- | A traversal over the immediate sub-expressions of an expression.
 subExpressions :: Applicative f => (Expr s a -> f (Expr s a)) -> Expr s a -> f (Expr s a)
-subExpressions _ (Const c) = pure (Const c)
+subExpressions _ (Sort u) = pure (Sort u)
 subExpressions _ (Var v) = pure (Var v)
 subExpressions f (Lam a b c) = Lam a <$> f b <*> f c
 subExpressions f (Pi a b c) = Pi a <$> f b <*> f c

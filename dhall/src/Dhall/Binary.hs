@@ -29,7 +29,6 @@ import Control.Exception (Exception)
 import Dhall.Core
     ( Binding(..)
     , Chunks(..)
-    , Const(..)
     , Directory(..)
     , Expr(..)
     , File(..)
@@ -39,6 +38,7 @@ import Dhall.Core
     , ImportMode(..)
     , ImportType(..)
     , Scheme(..)
+    , Universe(..)
     , URL(..)
     , Var(..)
     )
@@ -190,12 +190,14 @@ instance ToTerm a => ToTerm (Expr s a) where
         TString "Text/show"
     encode List =
         TString "List"
-    encode (Const Type) =
+    encode (Sort (Universe 0)) =
         TString "Type"
-    encode (Const Kind) =
+    encode (Sort (Universe 1)) =
         TString "Kind"
-    encode (Const Sort) =
+    encode (Sort (Universe 2)) =
         TString "Sort"
+    encode (Sort (Universe n)) =
+        TList [ TInt 27, TInteger (fromIntegral n) ]
     encode e@(App _ _) =
         TList ([ TInt 0, f₁ ] ++ map encode arguments)
       where
@@ -557,11 +559,15 @@ instance FromTerm a => FromTerm (Expr s a) where
     decode (TString "List") =
         return List
     decode (TString "Type") =
-        return (Const Type)
+        return (Sort (Universe 0))
     decode (TString "Kind") =
-        return (Const Kind)
+        return (Sort (Universe 1))
     decode (TString "Sort") =
-        return (Const Sort)
+        return (Sort (Universe 2))
+    decode (TList [ TInt 27, TInt n ]) = do
+        return (Sort (Universe (fromIntegral n)))
+    decode (TList [ TInt 27, TInteger n ]) =
+        return (Sort (Universe (fromInteger n)))
     decode (TString "_") =
         empty
     decode (TList [ TString x, TInt n ]) =

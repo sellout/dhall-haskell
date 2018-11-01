@@ -9,7 +9,7 @@ data Ann
 
 prettyVar :: Var -> Doc Ann
 
-prettyConst :: Const -> Doc Ann
+prettyUniverse :: Universe -> Doc Ann
 
 prettyExpr :: Pretty a => Expr s a -> Doc Ann
 

@@ -68,8 +68,8 @@ import Dhall.Core (
     Expr(..)
   , Binding(..)
   , Chunks(..)
-  , Const(..)
   , Import
+  , Universe(..)
   , Var(..)
   , denote
   )
@@ -143,7 +143,7 @@ pattern VPrim :: (Val a -> Val a) -> Val a
 pattern VPrim f = VHLam Prim f
 
 data Val a
-  = VConst !Const
+  = VSort !Universe
   | VVar !Text !Int
   | VPrimVar
   | VApp !(Val a) !(Val a)
@@ -314,7 +314,7 @@ eval !env t =
     {-# inline evalChunks #-}
 
   in case t of
-    Const k          -> VConst k
+    Sort u           -> VSort u
     Var v            -> vVar env v
     Lam x a t        -> VLam (evalE a) (Cl x env t)
     Pi x a b         -> VPi (evalE a) (Cl x env b)
@@ -362,7 +362,7 @@ eval !env t =
     NaturalLit n     -> VNaturalLit n
     NaturalFold      -> VPrim $ \case
                           VNaturalLit n ->
-                            VHLam (Typed "natural" (VConst Type)) $ \natural ->
+                            VHLam (Typed "natural" (VSort (Universe 0))) $ \natural ->
                             VHLam (Typed "succ" (vFun natural natural)) $ \succ ->
                             VHLam (Typed "zero" natural) $ \zero ->
                               let go !acc 0 = acc
@@ -439,7 +439,7 @@ eval !env t =
 
     ListFold         -> VPrim $ \a -> VPrim $ \case
                           VListLit _ as ->
-                            VHLam (Typed "list" (VConst Type)) $ \list ->
+                            VHLam (Typed "list" (VSort (Universe 0))) $ \list ->
                             VHLam (Typed "cons" (vFun a $ vFun list list) ) $ \cons ->
                             VHLam (Typed "nil"  list) $ \nil ->
                               foldr' (\x b -> cons `vApp` x `vApp` b) nil as
@@ -486,12 +486,12 @@ eval !env t =
 
     OptionalFold     -> VPrim $ \ ~a -> VPrim $ \case
                           VNone _ ->
-                            VHLam (Typed "optional" (VConst Type)) $ \optional ->
+                            VHLam (Typed "optional" (VSort (Universe 0))) $ \optional ->
                             VHLam (Typed "some" (vFun a optional)) $ \some ->
                             VHLam (Typed "none" optional) $ \none ->
                             none
                           VSome t ->
-                            VHLam (Typed "optional" (VConst Type)) $ \optional ->
+                            VHLam (Typed "optional" (VSort (Universe 0))) $ \optional ->
                             VHLam (Typed "some" (vFun a optional)) $ \some ->
                             VHLam (Typed "none" optional) $ \none ->
                             some `vApp` t
@@ -591,7 +591,7 @@ conv !env t t' =
     {-# inline convSkip #-}
 
   in case (t, t') of
-    (VConst k, VConst k') -> k == k'
+    (VSort u, VSort u') -> u == u'
     (VVar x i, VVar x' i') -> x == x' && i == i'
 
     (VLam _ (freshCl -> (x, v, t)), VLam _ t' ) -> convSkip x (inst t v) (inst t' v)
@@ -740,7 +740,7 @@ quote !env !t =
     {-# inline qApp #-}
 
   in case t of
-    VConst k                      -> Const k
+    VSort u                       -> Sort u
     VVar x i                      -> qVar x i
     VApp t u                      -> quoteE t `qApp` u
     VLam a (freshCl -> (x, v, t)) -> Lam x (quoteE a) (quoteBind x (inst t v))
@@ -853,7 +853,7 @@ alphaNormalize = goEnv NEmpty where
     goChunks (Chunks ts x) = Chunks ((go <$>) <$> ts) x
 
     in case t of
-      Const k          -> Const k
+      Sort u           -> Sort u
       Var (V x i)      -> goVar e x i
       Lam x t u        -> Lam "_" (go t) (goBind x u)
       Pi x a b         -> Pi "_" (go a) (goBind x b)

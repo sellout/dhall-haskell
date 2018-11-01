@@ -18,13 +18,13 @@ module Dhall.Pretty.Internal (
     , pretty
     , escapeText
 
-    , prettyConst
     , prettyLabel
     , prettyAnyLabel
     , prettyLabels
     , prettyNatural
     , prettyNumber
     , prettyDouble
+    , prettyUniverse
     , prettyToStrictText
     , prettyToString
 
@@ -333,10 +333,10 @@ prettyNatural = literal . Pretty.pretty
 prettyDouble :: Double -> Doc Ann
 prettyDouble = literal . Pretty.pretty
 
-prettyConst :: Const -> Doc Ann
-prettyConst Type = builtin "Type"
-prettyConst Kind = builtin "Kind"
-prettyConst Sort = builtin "Sort"
+prettyUniverse :: Universe -> Doc Ann
+prettyUniverse (Universe 0) = builtin "Type"
+prettyUniverse (Universe 1) = builtin "Kind"
+prettyUniverse (Universe n) = builtin "Sort" <> prettyNatural n
 
 prettyVar :: Var -> Doc Ann
 prettyVar (V x 0) = label (Pretty.unAnnotate (prettyLabel x))
@@ -742,8 +742,8 @@ prettyCharacterSet characterSet = prettyExpression
     prettyPrimitiveExpression :: Pretty a => Expr s a -> Doc Ann
     prettyPrimitiveExpression (Var a) =
         prettyVar a
-    prettyPrimitiveExpression (Const k) =
-        prettyConst k
+    prettyPrimitiveExpression (Sort k) =
+        prettyUniverse k
     prettyPrimitiveExpression Bool =
         builtin "Bool"
     prettyPrimitiveExpression Natural =

@@ -461,8 +461,8 @@ convertToHomogeneousMaps NoConversion e0 = e0
 convertToHomogeneousMaps (Conversion {..}) e0 = loop (Dhall.Core.normalize e0)
   where
     loop e = case e of
-        Dhall.Core.Const a ->
-            Dhall.Core.Const a
+        Dhall.Core.Sort a ->
+            Dhall.Core.Sort a
 
         Dhall.Core.Var v ->
             Dhall.Core.Var v

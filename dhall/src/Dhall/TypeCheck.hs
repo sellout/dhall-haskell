@@ -35,7 +35,7 @@ import Data.Text.Prettyprint.Doc (Doc, Pretty(..))
 import Data.Traversable (forM)
 import Data.Typeable (Typeable)
 import Dhall.Binary (FromTerm(..), ToTerm(..))
-import Dhall.Core (Binding(..), Const(..), Chunks(..), Expr(..), Var(..))
+import Dhall.Core (Binding(..), Chunks(..), Expr(..), Universe(..), Var(..))
 import Dhall.Context (Context)
 import Dhall.Pretty (Ann, layoutOpts)
 
@@ -57,21 +57,17 @@ traverseWithIndex_ :: Applicative f => (Int -> a -> f b) -> Seq a -> f ()
 traverseWithIndex_ k xs =
     Data.Foldable.sequenceA_ (Data.Sequence.mapWithIndex k xs)
 
-axiom :: Const -> Either (TypeError s a) Const
-axiom Type = return Kind
-axiom Kind = return Sort
-axiom Sort = Left (TypeError Dhall.Context.empty (Const Sort) Untyped)
+axiom :: Universe -> Universe
+axiom (Universe n) = Universe (succ n)
 
-rule :: Const -> Const -> Either () Const
-rule Type Type = return Type
-rule Kind Type = return Type
-rule Sort Type = return Type
-rule Kind Kind = return Kind
-rule Sort Kind = return Sort
-rule Sort Sort = return Sort
--- This forbids dependent types. If this ever changes, then the fast
--- path in the Let case of typeWithA will become unsound.
-rule _    _    = Left ()
+rule :: Universe -> Universe -> Either () Universe
+rule (Universe _) (Universe 0) = return (Universe 0)
+rule (Universe m) (Universe n) =
+  if n <= m
+  then return (Universe (max m n))
+  -- This forbids dependent types. If this ever changes, then the fast
+  -- path in the Let case of typeWithA will become unsound.
+  else Left ()
 
 {-| Type-check an expression and return the expression's type if type-checking
     succeeds or an error if type-checking fails
@@ -104,8 +100,8 @@ typeWithA
     -> Either (TypeError s a) (Expr s a)
 typeWithA tpa = loop
   where
-    loop _     (Const c         ) = do
-        fmap Const (axiom c)
+    loop _     (Sort u          ) = do
+        return (Sort (axiom u))
     loop ctx e@(Var (V x n)     ) = do
         case Dhall.Context.lookup x n ctx of
             Nothing -> Left (TypeError ctx e (UnboundVariable x))
@@ -123,18 +119,18 @@ typeWithA tpa = loop
     loop ctx e@(Pi  x _A _B     ) = do
         tA <- fmap Dhall.Core.normalize (loop ctx _A)
         kA <- case tA of
-            Const k -> return k
-            _       -> Left (TypeError ctx e (InvalidInputType _A))
+            Sort k -> return k
+            _      -> Left (TypeError ctx e (InvalidInputType _A))
 
         let ctx' = fmap (Dhall.Core.shift 1 (V x 0)) (Dhall.Context.insert x (Dhall.Core.normalize _A) ctx)
         tB <- fmap Dhall.Core.normalize (loop ctx' _B)
         kB <- case tB of
-            Const k -> return k
-            _       -> Left (TypeError ctx' e (InvalidOutputType _B))
+            Sort k -> return k
+            _      -> Left (TypeError ctx' e (InvalidOutputType _B))
 
         case rule kA kB of
             Left () -> Left (TypeError ctx e (NoDependentTypes _A _B))
-            Right k -> Right (Const k)
+            Right k -> Right (Sort k)
     loop ctx e@(App f a         ) = do
         tf <- fmap Dhall.Core.normalize (loop ctx f)
         (x, _A, _B) <- case tf of
@@ -182,7 +178,7 @@ typeWithA tpa = loop
         -- speed-up by doing the type-checking once at binding-time,
         -- as opposed to doing it at every use site (see #412).
         case Dhall.Core.normalize t of
-          Const Type -> do
+          Sort (Universe 0) -> do
             let ctx' = fmap (Dhall.Core.shift 1 (V x 0)) (Dhall.Context.insert x (Dhall.Core.normalize _A1) ctx)
             _B0 <- loop ctx' rest
             let _B1 = Dhall.Core.subst (V x 0) a2 _B0
@@ -206,7 +202,7 @@ typeWithA tpa = loop
                 let nf_t' = Dhall.Core.normalize t'
                 Left (TypeError ctx e (AnnotMismatch x nf_t nf_t'))
     loop _      Bool              = do
-        return (Const Type)
+        return (Sort (Universe 0))
     loop _     (BoolLit _       ) = do
         return Bool
     loop ctx e@(BoolAnd l r     ) = do
@@ -265,33 +261,33 @@ typeWithA tpa = loop
         ty  <- fmap Dhall.Core.normalize (loop ctx y )
         tty <- fmap Dhall.Core.normalize (loop ctx ty)
         case tty of
-            Const Type -> return ()
-            _          -> Left (TypeError ctx e (IfBranchMustBeTerm True y ty tty))
+            Sort (Universe 0) -> return ()
+            _ -> Left (TypeError ctx e (IfBranchMustBeTerm True y ty tty))
 
         tz <- fmap Dhall.Core.normalize (loop ctx z)
         ttz <- fmap Dhall.Core.normalize (loop ctx tz)
         case ttz of
-            Const Type -> return ()
-            _          -> Left (TypeError ctx e (IfBranchMustBeTerm False z tz ttz))
+            Sort (Universe 0) -> return ()
+            _ -> Left (TypeError ctx e (IfBranchMustBeTerm False z tz ttz))
 
         if Dhall.Core.judgmentallyEqual ty tz
             then return ()
             else Left (TypeError ctx e (IfBranchMismatch y z ty tz))
         return ty
     loop _      Natural           = do
-        return (Const Type)
+        return (Sort (Universe 0))
     loop _     (NaturalLit _    ) = do
         return Natural
     loop _      NaturalFold       = do
         return
             (Pi "_" Natural
-                (Pi "natural" (Const Type)
+                (Pi "natural" (Sort (Universe 0))
                     (Pi "succ" (Pi "_" "natural" "natural")
                         (Pi "zero" "natural" "natural") ) ) )
     loop _      NaturalBuild      = do
         return
             (Pi "_"
-                (Pi "natural" (Const Type)
+                (Pi "natural" (Sort (Universe 0))
                     (Pi "succ" (Pi "_" "natural" "natural")
                         (Pi "zero" "natural" "natural") ) )
                 Natural )
@@ -328,7 +324,7 @@ typeWithA tpa = loop
             _       -> Left (TypeError ctx e (CantMultiply r tr))
         return Natural
     loop _      Integer           = do
-        return (Const Type)
+        return (Sort (Universe 0))
     loop _     (IntegerLit _    ) = do
         return Integer
     loop _      IntegerShow  = do
@@ -336,13 +332,13 @@ typeWithA tpa = loop
     loop _      IntegerToDouble = do
         return (Pi "_" Integer Double)
     loop _      Double            = do
-        return (Const Type)
+        return (Sort (Universe 0))
     loop _     (DoubleLit _     ) = do
         return Double
     loop _     DoubleShow         = do
         return (Pi "_" Double Text)
     loop _      Text              = do
-        return (Const Type)
+        return (Sort (Universe 0))
     loop ctx e@(TextLit (Chunks xys _)) = do
         let process (_, y) = do
                 ty <- fmap Dhall.Core.normalize (loop ctx y)
@@ -365,14 +361,14 @@ typeWithA tpa = loop
     loop _      TextShow          = do
         return (Pi "_" Text Text)
     loop _      List              = do
-        return (Pi "_" (Const Type) (Const Type))
+        return (Pi "_" (Sort (Universe 0)) (Sort (Universe 0)))
     loop ctx e@(ListLit  Nothing  xs) = do
         case Data.Sequence.viewl xs of
             x0 :< _ -> do
                 t <- loop ctx x0
                 s <- fmap Dhall.Core.normalize (loop ctx t)
                 case s of
-                    Const Type -> return ()
+                    Sort (Universe 0) -> return () -- FIXME: Generalize to `n`?
                     _ -> Left (TypeError ctx e (InvalidListType t))
                 flip traverseWithIndex_ xs (\i x -> do
                     t' <- loop ctx x
@@ -388,7 +384,7 @@ typeWithA tpa = loop
     loop ctx e@(ListLit (Just t ) xs) = do
         s <- fmap Dhall.Core.normalize (loop ctx t)
         case s of
-            Const Type -> return ()
+            Sort (Universe 0) -> return () -- FIXME: Normalize to `n`?
             _ -> Left (TypeError ctx e (InvalidListType t))
         flip traverseWithIndex_ xs (\i x -> do
             t' <- loop ctx x
@@ -415,41 +411,41 @@ typeWithA tpa = loop
             else Left (TypeError ctx e (ListAppendMismatch el er))
     loop _      ListBuild         = do
         return
-            (Pi "a" (Const Type)
+            (Pi "a" (Sort (Universe 0))
                 (Pi "_"
-                    (Pi "list" (Const Type)
+                    (Pi "list" (Sort (Universe 0))
                         (Pi "cons" (Pi "_" "a" (Pi "_" "list" "list"))
                             (Pi "nil" "list" "list") ) )
                     (App List "a") ) )
     loop _      ListFold          = do
         return
-            (Pi "a" (Const Type)
+            (Pi "a" (Sort (Universe 0))
                 (Pi "_" (App List "a")
-                    (Pi "list" (Const Type)
+                    (Pi "list" (Sort (Universe 0))
                         (Pi "cons" (Pi "_" "a" (Pi "_" "list" "list"))
                             (Pi "nil" "list" "list")) ) ) )
     loop _      ListLength        = do
-        return (Pi "a" (Const Type) (Pi "_" (App List "a") Natural))
+        return (Pi "a" (Sort (Universe 0)) (Pi "_" (App List "a") Natural))
     loop _      ListHead          = do
-        return (Pi "a" (Const Type) (Pi "_" (App List "a") (App Optional "a")))
+        return (Pi "a" (Sort (Universe 0)) (Pi "_" (App List "a") (App Optional "a")))
     loop _      ListLast          = do
-        return (Pi "a" (Const Type) (Pi "_" (App List "a") (App Optional "a")))
+        return (Pi "a" (Sort (Universe 0)) (Pi "_" (App List "a") (App Optional "a")))
     loop _      ListIndexed       = do
         let kts = [("index", Natural), ("value", "a")]
         return
-            (Pi "a" (Const Type)
+            (Pi "a" (Sort (Universe 0))
                 (Pi "_" (App List "a")
                     (App List (Record (Dhall.Map.fromList kts))) ) )
     loop _      ListReverse       = do
-        return (Pi "a" (Const Type) (Pi "_" (App List "a") (App List "a")))
+        return (Pi "a" (Sort (Universe 0)) (Pi "_" (App List "a") (App List "a")))
     loop _      Optional          = do
-        return (Pi "_" (Const Type) (Const Type))
+        return (Pi "_" (Sort (Universe 0)) (Sort (Universe 0)))
     loop _      None              = do
-        return (Pi "A" (Const Type) (App Optional "A"))
+        return (Pi "A" (Sort (Universe 0)) (App Optional "A"))
     loop ctx e@(OptionalLit t xs) = do
         s <- fmap Dhall.Core.normalize (loop ctx t)
         case s of
-            Const Type -> return ()
+            Sort (Universe 0) -> return ()
             _ -> Left (TypeError ctx e (InvalidOptionalType t))
         forM_ xs (\x -> do
             t' <- loop ctx x
@@ -464,59 +460,61 @@ typeWithA tpa = loop
         _A <- loop ctx a
         s <- fmap Dhall.Core.normalize (loop ctx _A)
         case s of
-            Const Type -> return ()
+            Sort (Universe 0) -> return ()
             _          -> Left (TypeError ctx e (InvalidSome a _A s))
         return (App Optional _A)
     loop _      OptionalFold      = do
         return
-            (Pi "a" (Const Type)
+            (Pi "a" (Sort (Universe 0))
                 (Pi "_" (App Optional "a")
-                    (Pi "optional" (Const Type)
+                    (Pi "optional" (Sort (Universe 0))
                         (Pi "just" (Pi "_" "a" "optional")
                             (Pi "nothing" "optional" "optional") ) ) ) )
     loop _      OptionalBuild     = do
         return
-            (Pi "a" (Const Type)
+            (Pi "a" (Sort (Universe 0))
                 (Pi "_" f (App Optional "a") ) )
-        where f = Pi "optional" (Const Type)
+        where f = Pi "optional" (Sort (Universe 0))
                       (Pi "just" (Pi "_" "a" "optional")
                           (Pi "nothing" "optional" "optional") )
     loop ctx e@(Record    kts   ) = do
         case Dhall.Map.uncons kts of
-            Nothing             -> return (Const Type)
+            Nothing             -> return (Sort (Universe 0))
             Just (k0, t0, rest) -> do
                 s0 <- fmap Dhall.Core.normalize (loop ctx t0)
-                c <- case s0 of
-                    Const c -> pure c
+                u <- case s0 of
+                    Sort u -> return u
                     _ -> Left (TypeError ctx e (InvalidFieldType k0 t0))
                 let process k t = do
                         s <- fmap Dhall.Core.normalize (loop ctx t)
                         case s of
-                            Const c' ->
-                                if c == c'
+                            Sort u' ->
+                                if u == u'
                                 then return ()
-                                else Left (TypeError ctx e (FieldAnnotationMismatch k t c k0 t0 c'))
-                            _ -> Left (TypeError ctx e (InvalidFieldType k t))
+                                else Left (TypeError ctx e (FieldAnnotationMismatch k t u k0 t0 u'))
+                            _ ->
+                                Left (TypeError ctx e (InvalidFieldType k t))
                 Dhall.Map.unorderedTraverseWithKey_ process rest
-                return (Const c)
+                return (Sort u)
     loop ctx e@(RecordLit kvs   ) = do
         case Dhall.Map.toList kvs of
             []         -> return (Record mempty)
             (k0, v0):_ -> do
                 t0 <- loop ctx v0
                 s0 <- fmap Dhall.Core.normalize (loop ctx t0)
-                c <- case s0 of
-                    Const c -> pure c
-                    _       -> Left (TypeError ctx e (InvalidField k0 v0))
+                u <- case s0 of
+                    Sort u -> return u
+                    _      -> Left (TypeError ctx e (InvalidField k0 v0))
                 let process k v = do
                         t <- loop ctx v
                         s <- fmap Dhall.Core.normalize (loop ctx t)
                         case s of
-                            Const c' ->
-                                if c == c'
+                            Sort u' ->
+                                if u == u'
                                 then return ()
-                                else Left (TypeError ctx e (FieldMismatch k v c k0 v0 c'))
-                            _ -> Left (TypeError ctx e (InvalidField k t))
+                                else Left (TypeError ctx e (FieldMismatch k v u k0 v0 u'))
+                            _ ->
+                                Left (TypeError ctx e (InvalidField k t))
 
                         return t
                 kts <- Dhall.Map.traverseWithKey process kvs
@@ -526,14 +524,14 @@ typeWithA tpa = loop
 
         case getFirst (Dhall.Map.foldMapWithKey nonEmpty kts) of
             Nothing -> do
-                return (Const Type)
+                return (Sort (Universe 0))
 
             Just (k0, t0) -> do
                 s0 <- fmap Dhall.Core.normalize (loop ctx t0)
 
-                c0 <- case s0 of
-                    Const c0 -> do
-                        return c0
+                u0 <- case s0 of
+                    Sort u0 -> do
+                        return u0
 
                     _ -> do
                         Left (TypeError ctx e (InvalidAlternativeType k0 t0))
@@ -544,20 +542,20 @@ typeWithA tpa = loop
                     process k (Just t) = do
                         s <- fmap Dhall.Core.normalize (loop ctx t)
 
-                        c <- case s of
-                            Const c -> do
-                                return c
+                        u <- case s of
+                            Sort u -> do
+                                return u
 
                             _ -> do
                                 Left (TypeError ctx e (InvalidAlternativeType k t))
 
-                        if c0 == c
+                        if u0 == u
                             then return ()
-                            else Left (TypeError ctx e (AlternativeAnnotationMismatch k t c k0 t0 c0))
+                            else Left (TypeError ctx e (AlternativeAnnotationMismatch k t u k0 t0 u0))
 
                 Dhall.Map.unorderedTraverseWithKey_ process kts
 
-                return (Const c0)
+                return (Sort u0)
     loop ctx e@(UnionLit k v kts) = do
         case Dhall.Map.lookup k kts of
             Just _  -> Left (TypeError ctx e (DuplicateAlternative k))
@@ -579,12 +577,12 @@ typeWithA tpa = loop
 
         ttKvsX <- fmap Dhall.Core.normalize (loop ctx tKvsX)
         constX <- case ttKvsX of
-            Const constX -> return constX
+            Sort constX -> return constX
             _            -> Left (TypeError ctx e (MustCombineARecord '∧' kvsX tKvsX))
 
         ttKvsY <- fmap Dhall.Core.normalize (loop ctx tKvsY)
         constY <- case ttKvsY of
-            Const constY -> return constY
+            Sort constY -> return constY
             _            -> Left (TypeError ctx e (MustCombineARecord '∧' kvsY tKvsY))
 
         if constX == constY
@@ -615,21 +613,17 @@ typeWithA tpa = loop
         tL <- loop ctx l
         let l' = Dhall.Core.normalize l
         cL <- case tL of
-            Const cL -> return cL
+            Sort cL -> return cL
             _        -> Left (TypeError ctx e (CombineTypesRequiresRecordType l l'))
         tR <- loop ctx r
         let r' = Dhall.Core.normalize r
         cR <- case tR of
-            Const cR -> return cR
+            Sort cR -> return cR
             _        -> Left (TypeError ctx e (CombineTypesRequiresRecordType r r'))
-        let decide Type Type =
-                return Type
-            decide Kind Kind =
-                return Kind
-            decide Sort Sort =
-                return Sort
-            decide x y =
-                Left (TypeError ctx e (RecordTypeMismatch x y l r))
+        let decide x y =
+              if x == y
+              then return x
+              else Left (TypeError ctx e (RecordTypeMismatch x y l r))
         c <- decide cL cR
 
         ktsL0 <- case l' of
@@ -658,7 +652,7 @@ typeWithA tpa = loop
 
         combineTypes ktsL0 ktsR0
 
-        return (Const c)
+        return (Sort c)
     loop ctx e@(Prefer kvsX kvsY) = do
         tKvsX <- fmap Dhall.Core.normalize (loop ctx kvsX)
         ktsX  <- case tKvsX of
@@ -672,12 +666,12 @@ typeWithA tpa = loop
 
         ttKvsX <- fmap Dhall.Core.normalize (loop ctx tKvsX)
         constX <- case ttKvsX of
-            Const constX -> return constX
+            Sort constX -> return constX
             _            -> Left (TypeError ctx e (MustCombineARecord '⫽' kvsX tKvsX))
 
         ttKvsY <- fmap Dhall.Core.normalize (loop ctx tKvsY)
         constY <- case ttKvsY of
-            Const constY -> return constY
+            Sort constY -> return constY
             _            -> Left (TypeError ctx e (MustCombineARecord '⫽' kvsY tKvsY))
 
         if constX == constY
@@ -783,7 +777,7 @@ typeWithA tpa = loop
                 case Dhall.Map.lookup x kts of
                     Just t' -> return t'
                     Nothing -> Left (TypeError ctx e (MissingField x t))
-            Const Type -> do
+            Sort (Universe 0) -> do
                 case Dhall.Core.normalize r of
                   Union kts ->
                     case Dhall.Map.lookup x kts of
@@ -854,7 +848,6 @@ data TypeMessage s a
     | NotAFunction (Expr s a) (Expr s a)
     | TypeMismatch (Expr s a) (Expr s a) (Expr s a) (Expr s a)
     | AnnotMismatch (Expr s a) (Expr s a) (Expr s a)
-    | Untyped
     | MissingListType
     | MismatchedListElements Int (Expr s a) (Expr s a) (Expr s a)
     | InvalidListElement Int (Expr s a) (Expr s a) (Expr s a)
@@ -867,17 +860,17 @@ data TypeMessage s a
     | IfBranchMustBeTerm Bool (Expr s a) (Expr s a) (Expr s a)
     | InvalidField Text (Expr s a)
     | InvalidFieldType Text (Expr s a)
-    | FieldAnnotationMismatch Text (Expr s a) Const Text (Expr s a) Const
-    | FieldMismatch Text (Expr s a) Const Text (Expr s a) Const
+    | FieldAnnotationMismatch Text (Expr s a) Universe Text (Expr s a) Universe
+    | FieldMismatch Text (Expr s a) Universe Text (Expr s a) Universe
     | InvalidAlternative Text (Expr s a)
     | InvalidAlternativeType Text (Expr s a)
-    | AlternativeAnnotationMismatch Text (Expr s a) Const Text (Expr s a) Const
+    | AlternativeAnnotationMismatch Text (Expr s a) Universe Text (Expr s a) Universe
     | ListAppendMismatch (Expr s a) (Expr s a)
     | DuplicateAlternative Text
     | MustCombineARecord Char (Expr s a) (Expr s a)
-    | RecordMismatch Char (Expr s a) (Expr s a) Const Const
+    | RecordMismatch Char (Expr s a) (Expr s a) Universe Universe
     | CombineTypesRequiresRecordType (Expr s a) (Expr s a)
-    | RecordTypeMismatch Const Const (Expr s a) (Expr s a)
+    | RecordTypeMismatch Universe Universe (Expr s a) (Expr s a)
     | FieldCollision Text
     | MustMergeARecord (Expr s a) (Expr s a)
     | MustMergeUnion (Expr s a) (Expr s a)
@@ -1568,42 +1561,6 @@ prettyTypeMessage (AnnotMismatch expr0 expr1 expr2) = ErrorMessages {..}
         txt1 = insert expr1
         txt2 = insert expr2
 
-prettyTypeMessage Untyped = ErrorMessages {..}
-  where
-    short = "❰Sort❱ has no type, kind, or sort"
-
-    long =
-        "Explanation: There are five levels of expressions that form a hierarchy:        \n\
-        \                                                                                \n\
-        \● terms                                                                         \n\
-        \● types                                                                         \n\
-        \● kinds                                                                         \n\
-        \● sorts                                                                         \n\
-        \● orders                                                                        \n\
-        \                                                                                \n\
-        \The following example illustrates this hierarchy:                               \n\
-        \                                                                                \n\
-        \    ┌───────────────────────────────────┐                                       \n\
-        \    │ \"ABC\" : Text : Type : Kind : Sort │                                     \n\
-        \    └───────────────────────────────────┘                                       \n\
-        \       ⇧      ⇧      ⇧      ⇧      ⇧                                            \n\
-        \       term   type   kind   sort   order                                        \n\
-        \                                                                                \n\
-        \There is nothing above ❰Sort❱ in this hierarchy, so if you try to type check any\n\
-        \expression containing ❰Sort❱ anywhere in the expression then type checking fails\n\
-        \                                                                                \n\
-        \Some common reasons why you might get this error:                               \n\
-        \                                                                                \n\
-        \● You supplied a sort where a kind was expected                                 \n\
-        \                                                                                \n\
-        \  For example, the following expression will fail to type check:                \n\
-        \                                                                                \n\
-        \    ┌──────────────────┐                                                        \n\
-        \    │ f : Type -> Kind │                                                        \n\
-        \    └──────────────────┘                                                        \n\
-        \                  ⇧                                                             \n\
-        \                  ❰Kind❱ is a sort, not a kind                                  \n"
-
 prettyTypeMessage (InvalidPredicate expr0 expr1) = ErrorMessages {..}
   where
     short = "Invalid predicate for ❰if❱"
@@ -2214,9 +2171,7 @@ prettyTypeMessage (FieldAnnotationMismatch k0 expr0 c0 k1 expr1 c1) = ErrorMessa
         txt2 = insert k1
         txt3 = insert expr1
 
-        level Type = "❰Type❱"
-        level Kind = "❰Kind❱"
-        level Sort = "❰Sort❱"
+        level u = "❰" <> Dhall.Pretty.Internal.prettyUniverse u <> "❱"
 
 prettyTypeMessage (FieldMismatch k0 expr0 c0 k1 expr1 c1) = ErrorMessages {..}
   where
@@ -2272,9 +2227,10 @@ prettyTypeMessage (FieldMismatch k0 expr0 c0 k1 expr1 c1) = ErrorMessages {..}
         txt2 = insert k1
         txt3 = insert expr1
 
-        level Type = "term"
-        level Kind = "type"
-        level Sort = "kind"
+        level (Universe 0) = "term"
+        level (Universe 1) = "type"
+        level (Universe 2) = "kind"
+        level (Universe n) = "sort " <> Dhall.Pretty.Internal.prettyNatural n
 
 prettyTypeMessage (InvalidField k expr0) = ErrorMessages {..}
   where
@@ -2470,9 +2426,7 @@ prettyTypeMessage (AlternativeAnnotationMismatch k0 expr0 c0 k1 expr1 c1) = Erro
         txt2 = insert k1
         txt3 = insert expr1
 
-        level Type = "❰Type❱"
-        level Kind = "❰Kind❱"
-        level Sort = "❰Sort❱"
+        level u = "❰" <> Dhall.Pretty.Internal.prettyUniverse u <> "❱"
 
 prettyTypeMessage (ListAppendMismatch expr0 expr1) = ErrorMessages {..}
   where
@@ -2648,9 +2602,10 @@ prettyTypeMessage (RecordMismatch c expr0 expr1 const0 const1) = ErrorMessages {
         txt0 = insert expr0
         txt1 = insert expr1
 
-        toClass Type = "terms"
-        toClass Kind = "types"
-        toClass Sort = "kinds"
+        toClass (Universe 0) = "terms"
+        toClass (Universe 1) = "types"
+        toClass (Universe 2) = "kinds"
+        toClass (Universe n) = "sorts " <> Dhall.Pretty.Internal.prettyNatural n
 
         class0 = toClass const0
         class1 = toClass const1

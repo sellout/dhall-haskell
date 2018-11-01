@@ -263,6 +263,7 @@ completeExpression embedded = completeExpression_
                     , alternative05
                     , alternative06
                     , alternative07
+                    , alternative20
                     , alternative37
                     , alternative09
 
@@ -375,17 +376,21 @@ completeExpression embedded = completeExpression_
                             , Optional         <$ _Optional
                             ]
                     'B' ->    Bool             <$ _Bool
-                    'S' ->    Const Sort       <$ _Sort
                     'T' ->
                         choice
                             [ TextShow         <$ _TextShow
                             , Text             <$ _Text
                             , BoolLit True     <$ _True
-                            , Const Type       <$ _Type
+                            , Sort (Universe 0) <$ _Type
                             ]
                     'F' ->    BoolLit False    <$ _False
-                    'K' ->    Const Kind       <$ _Kind
+                    'K' ->    Sort (Universe 1) <$ _Kind
                     _   ->    empty
+
+            alternative20 = do
+                _Sort
+                n <- try naturalLiteral
+                return (Sort (Universe n))
 
             alternative37 = do
                 a <- identifier

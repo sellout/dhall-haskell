@@ -833,7 +833,7 @@ loadWith expr₀ = case expr₀ of
             where
               text₂ = text₀ <> " ? " <> text₁
 
-  Const a              -> pure (Const a)
+  Sort a               -> pure (Sort a)
   Var a                -> pure (Var a)
   Lam a b c            -> Lam <$> pure a <*> loadWith b <*> loadWith c
   Pi a b c             -> Pi <$> pure a <*> loadWith b <*> loadWith c

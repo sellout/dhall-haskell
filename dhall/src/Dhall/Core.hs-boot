@@ -1,6 +1,6 @@
 module Dhall.Core where
 
-data Const
+data Universe
 
 data Var
 

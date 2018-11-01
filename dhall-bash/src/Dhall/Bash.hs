@@ -275,7 +275,7 @@ dhallToStatement expr0 var0 = go (Dhall.Core.normalize expr0)
 
     -- Use an exhaustive pattern match here so that we don't forget to handle
     -- new constructors added to the API
-    go e@(Const         {}) = Left (UnsupportedStatement e)
+    go e@(Sort          {}) = Left (UnsupportedStatement e)
     go e@(Var           {}) = Left (UnsupportedStatement e)
     go e@(Lam           {}) = Left (UnsupportedStatement e)
     go e@(Pi            {}) = Left (UnsupportedStatement e)

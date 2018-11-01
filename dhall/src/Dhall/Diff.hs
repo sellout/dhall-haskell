@@ -26,7 +26,7 @@ import Data.Sequence (Seq)
 import Data.String (IsString(..))
 import Data.Text (Text)
 import Data.Text.Prettyprint.Doc (Doc, Pretty)
-import Dhall.Core (Binding(..), Chunks (..), Const(..), Expr(..), Var(..))
+import Dhall.Core (Binding(..), Chunks (..), Expr(..), Universe(..), Var(..))
 import Dhall.Binary (ToTerm)
 import Dhall.Map (Map)
 import Dhall.Set (Set)
@@ -195,8 +195,8 @@ diffNatural = diffPrimitive (token . Internal.prettyNatural)
 diffDouble :: Double -> Double -> Diff
 diffDouble = diffPrimitive (token . Internal.prettyDouble)
 
-diffConst :: Const -> Const -> Diff
-diffConst = diffPrimitive (token . Internal.prettyConst)
+diffUniverse :: Universe -> Universe -> Diff
+diffUniverse = diffPrimitive (token . Internal.prettyUniverse)
 
 diffBool :: Bool -> Bool -> Diff
 diffBool = diffPrimitive bool
@@ -1051,11 +1051,11 @@ diffPrimitiveExpression l@(Var {}) r =
     mismatch l r
 diffPrimitiveExpression l r@(Var {}) =
     mismatch l r
-diffPrimitiveExpression (Const aL) (Const aR) =
-    diffConst aL aR
-diffPrimitiveExpression l@(Const {}) r =
+diffPrimitiveExpression (Sort aL) (Sort aR) =
+    diffUniverse aL aR
+diffPrimitiveExpression l@(Sort {}) r =
     mismatch l r
-diffPrimitiveExpression l r@(Const {}) =
+diffPrimitiveExpression l r@(Sort {}) =
     mismatch l r
 diffPrimitiveExpression Bool Bool =
     "…"
